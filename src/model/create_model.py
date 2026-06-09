@@ -66,9 +66,10 @@ def main():
     output_dir.mkdir(exist_ok=True)
 
     # Output model artifacts: pickled model and JSON list of features
-    pickle.dump(model, open(output_dir / "model.pkl", 'wb'))
-    json.dump(list(x_train.columns),
-              open(output_dir / "model_features.json", 'w'))
+    with open(output_dir / "model.pkl", "wb") as f:
+        pickle.dump(model, f)
+    with open(output_dir / "model_features.json", "w") as f:
+        json.dump(list(x_train.columns), f)
 
 
 if __name__ == "__main__":

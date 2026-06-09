@@ -1,4 +1,4 @@
-.PHONY: test-build test-unit test-integration test-all clean help
+.PHONY: test-build test-unit test-integration test-all profile clean help
 
 # Build the test Docker image
 test-build:
@@ -12,20 +12,25 @@ test-unit: test-build
 
 # Run integration tests with Docker Compose
 test-integration:
-	docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from test
+	docker compose -f docker-compose.test.yml --profile testing up --build --abort-on-container-exit --exit-code-from test
 
 # Run all tests (unit + integration)
 test-all: test-build
 	@echo "Running integration tests..."
-	docker-compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from test
+	docker compose -f docker-compose.test.yml --profile testing up --build --abort-on-container-exit --exit-code-from test
 	@echo "Running unit tests..."
 	docker run --rm \
 		-v $(PWD)/test-results:/app/test-results \
 		ml-api-test pytest test/unit -v
 
+# Run load profiling against the API (generates charts in test-results/profiling/)
+profile:
+	mkdir -p test-results/profiling
+	docker compose -f docker-compose.test.yml --profile profiling up --build --abort-on-container-exit --exit-code-from profiling
+
 # Clean up containers and test artifacts
 clean:
-	docker-compose -f docker-compose.test.yml down -v
+	docker compose -f docker-compose.test.yml --profile profiling down -v
 	rm -rf test-results/*
 
 # Display help information
@@ -37,6 +42,7 @@ help:
 	@echo "  test-unit         - Run unit tests only (fast)"
 	@echo "  test-integration  - Run integration tests with Docker Compose"
 	@echo "  test-all          - Run all tests (unit + integration)"
+	@echo "  profile           - Run load profiler (charts saved to test-results/profiling/)"
 	@echo "  clean             - Remove containers and test artifacts"
 	@echo "  help              - Display this help message"
 	@echo ""
@@ -44,4 +50,5 @@ help:
 	@echo "  make test-unit              # Quick unit tests"
 	@echo "  make test-integration       # Full integration tests"
 	@echo "  make test-all               # Complete test suite"
+	@echo "  make profile                # Load profiling with CPU/memory charts"
 	@echo "  make clean                  # Clean up after tests"
