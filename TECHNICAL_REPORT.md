@@ -462,19 +462,19 @@ The three technical workstreams addressed the full lifecycle of a deployed ML AP
 
 ### Tool
 
-I used **Claude Code** (Anthropic's CLI agent) as my primary AI assistant throughout this project. It ran directly in the terminal alongside the codebase, with access to read files, run commands, and make edits.
+I used **Claude Code** (Anthropic's CLI agent) as my primary AI assistant throughout this project. It ran directly in the terminal alongside the codebase, with access to read files, run commands, and make edits. I did not insert any aditional harness, such as skills or aditional instructions.
 
 ### How I Used It
 
-**Codebase orientation.** The first thing I did was ask Claude Code to read the existing source files and summarize what was there. Rather than spending 30 minutes manually tracing imports and understanding the Docker setup, I got a working mental model of the project in a few minutes. I then verified the summary against the actual code before touching anything.
+**Codebase orientation.** Since the main objective of the exercise was to assess my approach to problem-solving, I tried to decouple my understanding of the problem from the LLM’s perspective to avoid biasing either side. I therefore performed the initial exploration and assessment of the codebase independently, identifying and documenting the main areas I wanted to address later.
 
-**Planning before coding.** For each of the three workstreams I used a structured planning mode — Claude Code would read the relevant files, propose an approach, and I would review and approve it before any changes were made. This prevented the common failure mode of AI jumping straight to implementation before the problem is well understood. The plans included specific files, line numbers, and trade-off reasoning, which I could evaluate on their own merits.
+**Planning before coding.** For each of the three workstreams, I used a structured planning process. Claude Code would read the relevant files and propose an approach, which I would review and approve before any changes were made. This helped avoid a common failure mode of AI-assisted development: jumping directly into implementation before the problem is fully understood. The plans included specific files, line references, and trade-off analyses, allowing me to evaluate them on their own merits.
 
-**Implementation and iteration.** Once a plan was approved, Claude Code made the code changes. I reviewed every diff before it was committed. In several cases I redirected it — for example, on the performance work, the initial proposal focused on caching. I asked it to also profile the `print()` statement, which turned out to be the bigger bottleneck. The tool found it, but I had to know to ask.
+**Implementation and iteration.** Once a plan was approved, Claude Code implemented the proposed changes. I reviewed every diff before it was committed. In several cases, I redirected the work. For example, during the performance optimization task, the initial proposal focused on caching. I asked it to also profile the print() statement, which ultimately proved to be the larger bottleneck. The tool identified the issue, but I had to know to ask the right question.
 
-**Profiling and analysis.** After each profiling run I shared the raw JSON results and asked Claude Code to interpret them. The OpenBLAS over-threading finding at 4 vCPU is a good example — it produced the data, I asked "why does more CPU make it slower?", and the explanation it gave (OpenBLAS reading host CPU count, not Docker limit) was correct and something I was able to verify independently.
+**Profiling and analysis.** Claude Code helped me iterate on the profiling process across multiple configurations, compile the results, and analyze the findings.
 
-**Writing.** The technical report, code comments, and commit messages were drafted by Claude Code based on the actual data and code. I edited for tone and accuracy. The business narrative section required more back-and-forth because the tool's default register is technical — I had to explicitly say "no jargon, write for a real estate agent" to get the right output.
+**Writing.** The technical report, code comments, and commit messages were initially drafted by Claude Code based on the actual code and collected data. I then reviewed and edited them for accuracy, clarity, and tone.
 
 ### What Worked Well
 
@@ -484,12 +484,10 @@ The planning workflow was the other major win. Having the tool propose a concret
 
 ### Where I Had to Stay Engaged
 
-AI-generated code is confident regardless of correctness. The profiling infrastructure in particular required careful review: the tool wrote correct async load generation code, but I caught an early version that would have miscounted errors by conflating HTTP 422s (expected, from validation tests) with real failures. It also initially proposed a `max_requests = 1000` gunicorn setting that would have caused worker recycling mid-test — something that only surfaced when the first profiling run showed mysterious 0.4% error rates at every stage.
-
-The general pattern: the AI is good at the first 90% and occasionally wrong in ways that look right. Code review is not optional.
+AI-generated code is confident regardless of correctness. The profiling infrastructure required careful review: For instance AI suggested a config of max_requests = 1000 in gunicorn setting that would have caused worker recycling mid-test — something that only surfaced as mysterious 0.4% error rates in the first run.
 
 ### Context Management
 
 The project spanned multiple sessions. Between sessions I relied on a memory system — short markdown files recording key decisions, profiling configurations, and feedback on what approaches worked. At the start of each session the relevant context was reloaded so the tool wasn't starting cold. For a project of this scope (not huge, but with several interdependent components), that discipline mattered: without it, the tool would have re-derived things I had already decided, or re-proposed approaches I had already rejected.
 
-The other context discipline: keeping individual sessions focused. A session that tries to do performance optimization, code quality, and report writing simultaneously produces worse output than three focused sessions. The tool can hold a lot in context, but so can I — and the quality of both our outputs is better when the problem is well-scoped.
+The other context discipline: keeping individual sessions focused. A session that tries to do performance optimization, code quality, and report writing simultaneously produces worse output than three focused sessions.
