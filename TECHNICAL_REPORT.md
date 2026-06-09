@@ -296,7 +296,7 @@ Five environment variables are used across `gunicorn.conf.py`, `docker-compose.t
         ┌────────────▼──────────────────────▼────────────┐
         │               AWS S3 (model artifacts)          │
         │   model.pkl  •  imputer.pkl  •  features.json   │
-        │   versioned by model tag, mounted read-only     │
+        │   versioned by model tag, downloaded at startup  │
         └────────────────────────────────────────────────┘
         ┌────────────────────────────────────────────────┐
         │        Amazon CloudWatch                        │
@@ -310,7 +310,7 @@ Five environment variables are used across `gunicorn.conf.py`, `docker-compose.t
 
 **Container registry:** Amazon ECR. Every commit to `main` that passes CI builds a new image tagged with the commit SHA and pushes to ECR. The ECS task definition references the specific image tag, so deployments are fully reproducible and rollbacks are a tag swap.
 
-**Model artifact storage:** S3 with versioning enabled. `model.pkl`, `imputer.pkl`, and `model_features.json` are stored at a path that includes a model version tag (e.g., `s3://sound-realty-models/v20260607/model.pkl`). Tasks download artifacts at container startup via an ECS task role — no credentials in the image. This decouples model versioning from code versioning: a new model can be deployed without rebuilding the container.
+**Model artifact storage:** Artifacts are stored in S3 using path-based versioning as the primary versioning mechanism (e.g., `s3://sound-realty-models/v20260607/model.pkl`). S3 object versioning is also enabled as a safety net against accidental overwrites, but it is not the primary version identifier — the version is encoded in the path prefix. Tasks download artifacts at container startup via an ECS task role — no credentials in the image. This decouples model versioning from code versioning: a new model can be deployed without rebuilding the container.
 
 **Load balancer:** ALB with a target group pointing to the ECS service. The `/health` endpoint already implemented returns 200 when the model is loaded and the worker is ready; this is used as the ALB health check and the ECS container health check. Unhealthy tasks are replaced automatically.
 
@@ -322,7 +322,7 @@ Five environment variables are used across `gunicorn.conf.py`, `docker-compose.t
 
 | Layer | Control |
 |-------|---------|
-| Network | ALB in public subnet; ECS tasks in private subnet; no public IPs on tasks |
+| Network | ALB in public subnet; ECS tasks in private subnet; no public IPs on tasks. **VPC Endpoints for ECR and S3 are required** (or a NAT Gateway) so that tasks in the private subnet can pull images and download artifacts — without either, tasks fail at startup. |
 | TLS | ALB terminates HTTPS; containers communicate over VPC on HTTP |
 | Credentials | ECS task role grants S3 read access; no static credentials in code or image |
 | CORS | Fixed (`allow_credentials=False`); for production, narrow `allow_origins` to the frontend domain |
@@ -338,7 +338,7 @@ The API already emits structured logs (timestamp, logger name, level, message) o
 
 | Metric | Alarm threshold | Action |
 |--------|----------------|--------|
-| p99 request latency | > 200 ms for 5 min | Scale out ECS tasks |
+| p99 request latency | > 200 ms for 5 min | PagerDuty / on-call alert (autoscaling on `ALBRequestCountPerTarget` handles scaling independently) |
 | Error rate (`5xx` + timeouts) | > 1% over 1 min | PagerDuty alert |
 | Imputation hit rate (% requests with ≥ 1 null field) | — | Trend monitoring; large shifts indicate data quality change upstream |
 | Task memory utilization | > 80% | Review for memory leak |
@@ -365,14 +365,14 @@ The API already emits structured logs (timestamp, logger name, level, message) o
 
 ### Model Registry
 
-Committing `.pkl` files to git has two problems: binary files inflate repository size and provide no metadata about model quality. In production, each trained model would be registered in **MLflow Model Registry** (or AWS SageMaker Model Registry) with:
+Committing `.pkl` files to git has two problems: binary files inflate repository size and provide no metadata about model quality. In production, each trained model would be registered in **AWS SageMaker Model Registry** with:
 
 - Training date and dataset version
 - Hyperparameters (`n_neighbors`, `weights`, train/test split seed)
 - Evaluation metrics (R², MAE, RMSE on the held-out test set)
 - Stage label: `Staging` → `Production` (requires manual promotion or automated metric gate)
 
-This enables one-click rollback (promote the previous `Production` version), A/B testing (ALB weighted routing: 90% → current model, 10% → candidate), and a full audit trail of what was deployed when.
+This enables one-click rollback (promote the previous `Production` version), A/B testing (ALB weighted routing: 90% → current model, 10% → candidate), and a full audit trail of what was deployed when. MLflow is a viable alternative if a self-hosted tracking server is acceptable (e.g., running on ECS with an S3/RDS backend), but for a fully AWS-native stack SageMaker Model Registry requires no additional infrastructure to operate.
 
 ### Feature Store
 
@@ -393,16 +393,16 @@ git push → GitHub Actions
   ├─ build-image      (docker build + push to ECR)
   ├─ deploy-staging   (ECS service update → staging environment)
   ├─ smoke-tests      (curl /health + /predict with known payload, assert expected price range)
-  └─ promote-prod     (blue/green: ALB shifts traffic to new task set; old set drained)
+  └─ promote-prod     (blue/green via AWS CodeDeploy: shifts ALB traffic to new task set; old set drained)
 ```
 
-Blue/green deployment via ALB weighted target groups means zero-downtime deploys and instant rollback (shift traffic back to the blue target group if smoke tests fail on green).
+Blue/green deployment is orchestrated by **AWS CodeDeploy** (ECS deployment controller set to `CODE_DEPLOY`), which manages traffic shifting via ALB weighted target groups. This means zero-downtime deploys and instant rollback: if smoke tests fail on green, CodeDeploy shifts traffic back to blue before draining it.
 
 ### Model Retraining and Drift Detection
 
-**Scheduled retraining:** An AWS Step Functions state machine runs weekly (or on-demand when new sales data lands in S3). Steps: ingest new data → retrain KNN regressor + KNN imputer on combined historical + new data → evaluate against held-out test set → if metrics pass gate (e.g., R² > 0.75), register new version in Model Registry → trigger CI/CD pipeline to deploy.
+**Scheduled retraining:** An **Amazon EventBridge Scheduler** rule triggers an AWS Step Functions state machine weekly (or on-demand via an S3 event notification when new sales data lands). Steps: ingest new data → retrain KNN regressor + KNN imputer on combined historical + new data → evaluate against held-out test set → if metrics pass gate (e.g., R² > 0.75), register new version in Model Registry → trigger CI/CD pipeline to deploy.
 
-**Data drift:** Monitor the distribution of incoming request features (bedrooms, sqft_living, zipcode) in CloudWatch. If the input distribution shifts significantly from the training distribution (> 2σ on key features), alert the team — this may indicate the service is receiving data from a new market segment the model was not trained on.
+**Data drift:** The application emits incoming request feature values (bedrooms, sqft_living, zipcode) as CloudWatch custom metrics. **CloudWatch Anomaly Detection** models the expected statistical range for each metric; deviations beyond the anomaly band trigger an alarm. A sustained shift in input distributions may indicate the service is receiving data from a market segment the model was not trained on.
 
 **Concept drift:** Track the distribution of predicted prices over time. If the rolling mean predicted price diverges significantly from closed sale prices (requires a feedback loop from the MLS or CRM), it signals the model's price surface has become stale and retraining should be triggered ahead of schedule.
 
