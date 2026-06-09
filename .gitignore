@@ -29,8 +29,6 @@ htmlcov/
 chain_of_thought.ipynb
 journey.md
 
-# Generated model artifacts
-*.pkl
 
 # Profiling output
 profiling.html
