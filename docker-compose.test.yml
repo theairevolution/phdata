@@ -7,6 +7,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    environment:
+      - WEB_CONCURRENCY=${WEB_CONCURRENCY:-1}
     volumes:
       - ./src/model:/app/model:ro
       - ./src/data:/app/data:ro
@@ -15,7 +17,12 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-      start_period: 10s
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: "${API_CPUS:-2.0}"
+          memory: 2G
     networks:
       - test-network
 
@@ -35,6 +42,27 @@ services:
     command: pytest test/integration -v
     networks:
       - test-network
+    profiles:
+      - testing
+
+  profiling:
+    build:
+      context: .
+      dockerfile: Dockerfile.profiling
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      - API_BASE_URL=http://api:8000
+      - API_SERVICE_NAME=api
+      - RESULTS_DIR=/app/results
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./test-results/profiling:/app/results
+    networks:
+      - test-network
+    profiles:
+      - profiling
 
 networks:
   test-network:

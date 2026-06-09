@@ -274,6 +274,95 @@ For rapid development iteration:
 
 The Docker setup mounts source code as volumes, so you don't need to rebuild containers for every change during integration testing.
 
+## Load Profiling
+
+The profiling module runs progressive load stages against the API and records
+how CPU and memory evolve as concurrency increases.  It requires the Docker
+socket to be accessible so it can query live container stats.
+
+### How it works
+
+Five stages are executed in sequence, each sending continuous POST requests to
+`/predict` for a fixed duration:
+
+| Stage | Concurrent users | Duration |
+|-------|-----------------|----------|
+| 1     | 1               | 15 s     |
+| 2     | 5               | 20 s     |
+| 3     | 10              | 20 s     |
+| 4     | 15              | 20 s     |
+| 5     | 20              | 20 s     |
+
+During each stage the profiler polls the API container's cgroup stats every 1.5 s
+(CPU % and memory MB), then generates three charts and a JSON summary in
+`test-results/profiling/<run_id>/`.
+
+### Quick start
+
+```bash
+make profile
+```
+
+This target:
+1. Builds the API image and starts it (with health-check gating).
+2. Builds `Dockerfile.profiling` and starts the `profiling` container.
+3. Runs all five load stages and stops all containers when done.
+
+### Output
+
+```
+test-results/profiling/<YYYYMMDDTHHMMSS>/
+├── resource_timeline.png   — CPU % and memory MB over time (stage boundaries marked)
+├── latency_by_stage.png    — p50 / p95 / p99 response latency per stage
+├── throughput_by_stage.png — requests/second and error rate per stage
+└── summary.json            — machine-readable results for all stages
+```
+
+A summary table is also printed to the terminal:
+
+```
+Users   Reqs     RPS    Err%    p50 ms   p95 ms   p99 ms  AvgCPU%  PeakMem MB
+──────────────────────────────────────────────────────────────────────────────
+    1     42    2.80     0.0     340.1    380.2    390.5      12.3       145.0
+    5    180    9.00     0.0     545.3    620.1    640.0      38.7       147.2
+   10    290   14.50     0.0     680.4    790.2    820.3      65.1       148.5
+   15    380   19.00     1.5     920.0   1200.0   1300.0      78.4       150.0
+   20    400   20.00     4.0    1150.0   1500.0   1600.0      85.0       151.2
+```
+
+> The profiler exits with a non-zero code if any stage exceeds 10% errors, making
+> it usable as a gate in CI pipelines.
+
+### Profiling without Docker Compose
+
+You can run the profiler against any already-running API instance:
+
+```bash
+docker build -f Dockerfile.profiling -t ml-api-profiler .
+mkdir -p test-results/profiling
+
+docker run --rm \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$(pwd)/test-results/profiling":/app/results \
+  -e API_BASE_URL=http://host.docker.internal:8000 \
+  -e API_SERVICE_NAME=api \
+  ml-api-profiler
+```
+
+### Customising the load stages
+
+Edit the `LOAD_STAGES` list in `test/profiling/profile_api.py`:
+
+```python
+LOAD_STAGES = [
+    (1,  15),   # (concurrent_users, duration_seconds)
+    (5,  20),
+    (10, 20),
+    (15, 20),
+    (20, 20),
+]
+```
+
 ## Feedback
 
 We welcome any feedback regarding the project or the interview process. Your insights are valuable to us as we strive to improve the experience for future candidates.

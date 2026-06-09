@@ -1,0 +1,20 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-profiling.txt .
+RUN pip install --no-cache-dir -r requirements-profiling.txt
+
+COPY test/profiling/ ./profiling/
+
+# Results directory (overridable via volume mount)
+RUN mkdir -p /app/results
+
+ENV MPLBACKEND=Agg
+ENV RESULTS_DIR=/app/results
+
+CMD ["python", "profiling/profile_api.py"]
