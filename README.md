@@ -5,25 +5,54 @@ This project implements a RESTful API using FastAPI to deploy a machine learning
 ## Project Structure
 
 ```
-mle-project-challenge-2026
-├── src
-│   ├── main.py                # Entry point for the FastAPI application
-│   ├── api
-│   │   └── endpoints.py       # API endpoints for predictions
-│   ├── model
-│   │   ├── model.pkl          # Serialized machine learning model
-│   │   └── model_features.json # Features required for predictions
-│   ├── data
-│   │   ├── kc_house_data.csv  # Training data for the model
-│   │   ├── zipcode_demographics.csv # Demographic data for predictions
-│   │   └── future_unseen_examples.csv # Examples for testing the API
-│   └── utils
-│       └── loader.py          # Utility functions for loading the model
-├── requirements.txt            # Project dependencies
-├── Dockerfile                  # Docker instructions for deployment
-├── README.md                   # Project documentation
-└── test
-    └── test_api.py            # Test cases for the API
+phdata-cleanrepo/
+├── .github/
+│   └── workflows/
+│       └── ci.yml                    # GitHub Actions CI pipeline (unit tests on push/PR)
+├── src/
+│   ├── main.py                       # FastAPI application entry point
+│   ├── api/
+│   │   └── endpoints.py              # /predict and /health endpoints
+│   ├── model/
+│   │   ├── Dockerfile                # Docker image for model training
+│   │   ├── create_model.py           # Trains the KNN regressor and saves model.pkl
+│   │   ├── model.pkl                 # Serialized model (generated — not committed)
+│   │   ├── imputer.pkl               # Serialized KNN imputer (generated — not committed)
+│   │   └── model_features.json       # Feature order expected by the model
+│   └── data/
+│       ├── kc_house_data.csv         # Training data
+│       ├── zipcode_demographics.csv  # Demographic features joined at inference time
+│       └── future_unseen_examples.csv
+├── test/
+│   ├── conftest.py
+│   ├── unit/
+│   │   ├── test_api_unit.py          # API unit tests (happy path + edge cases)
+│   │   └── test_imputer_unit.py      # Imputer behaviour and bounds tests
+│   ├── integration/
+│   │   └── test_api_integration.py   # End-to-end tests against a running container
+│   └── profiling/
+│       └── profile_api.py            # Progressive load-stage profiler
+├── technical_studies/
+│   ├── code_quality.md               # Code quality audit notes
+│   └── profiling.md                  # Profiling methodology and findings
+├── notebooks/
+│   └── imputation_experiment.ipynb   # Exploratory analysis for imputation approach
+├── presentation_resources/           # Charts from profiling runs for presentations
+├── profiling-baselines/
+│   └── baseline_original_api.json    # Profiling results for the unmodified API
+├── create_imputer.py                 # Trains the KNN imputer and saves imputer.pkl
+├── Dockerfile                        # API production image
+├── Dockerfile.test                   # Test runner image
+├── Dockerfile.profiling              # Load profiler image
+├── Makefile                          # Build, test, and profiling automation
+├── docker-compose.test.yml           # Docker Compose for tests and profiling
+├── gunicorn.conf.py                  # Gunicorn worker configuration
+├── pytest.ini                        # Pytest configuration
+├── requirements.txt                  # API dependencies
+├── requirements-test.txt             # Test dependencies
+├── requirements-profiling.txt        # Profiling dependencies
+├── README.md
+└── TECHNICAL_REPORT.md               # Detailed write-up of all improvements
 ```
 
 ## Setup Instructions
@@ -55,6 +84,13 @@ docker run --rm -v "$(pwd)/src/model:/app/model" create-model
 ```
 
 This will create `model.pkl` and `model_features.json` in the `src/model/` directory.
+
+**Generate the KNN imputer artifact:**
+```bash
+cd src && python ../create_imputer.py
+```
+
+This creates `imputer.pkl` in `src/model/`. The imputer is required by the API to fill in any missing home feature fields at prediction time (see [Missing Data Handling](#missing-data-handling) below).
 
 ### Step 3: Build and Run the API
 
@@ -96,7 +132,41 @@ docker logs housing-api
 
 ## Usage
 
-To get predictions from the model, send a POST request to the `/predict` endpoint with the required features in JSON format. The API will return the predicted home price along with any additional metadata.
+Send a POST request to `/predict` with a JSON body. Only `zipcode` is required — all home feature fields are optional. Missing fields are filled automatically by the KNN imputer (see [Missing Data Handling](#missing-data-handling)).
+
+```json
+{
+  "zipcode": "98103",
+  "bedrooms": 3,
+  "bathrooms": 2.0,
+  "sqft_living": 1800,
+  "sqft_lot": 5000,
+  "floors": 1.0,
+  "sqft_above": 1800,
+  "sqft_basement": 0
+}
+```
+
+**Response:**
+```json
+{"predicted_price": 625000.0}
+```
+
+All numeric fields must be non-negative (`>= 0`). An unknown zipcode returns `422 Unprocessable Entity`.
+
+## Missing Data Handling
+
+All seven home feature fields (`bedrooms`, `bathrooms`, `sqft_living`, `sqft_lot`, `floors`, `sqft_above`, `sqft_basement`) are optional. When one or more are absent, a KNN imputer fills them before passing the record to the model.
+
+The imputer was trained with `n_neighbors=5, weights="distance"` on the same training split as the main model. For each missing value it finds the five most similar complete records in the training set and computes a distance-weighted average — more similar neighbours contribute proportionally more to the fill value.
+
+| Scenario | Result |
+|----------|--------|
+| All fields provided | Fields passed through unchanged |
+| One or more fields missing | Missing fields imputed; prediction returned |
+| Only `zipcode` provided | All seven fields imputed; prediction returned |
+
+This allows the API to return a best-effort estimate for listings at any stage of completeness, from a fully specified property to a bare-minimum record with only a location.
 
 ## Testing
 
@@ -273,6 +343,10 @@ For rapid development iteration:
 4. Before committing, run full suite: `make test-all`
 
 The Docker setup mounts source code as volumes, so you don't need to rebuild containers for every change during integration testing.
+
+## Continuous Integration
+
+A GitHub Actions workflow (`.github/workflows/ci.yml`) runs the unit test suite automatically on every push and pull request to `main`. The `unit-tests` job installs dependencies and runs `pytest test/unit`. Pull requests cannot merge unless all unit tests pass.
 
 ## Load Profiling
 

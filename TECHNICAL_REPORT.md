@@ -129,6 +129,8 @@ The table below uses a dedicated run for each config to show p50, p95, and p99 f
 | 30 | — | — | — | 80.7 ms | 146.6 ms | 221.6 ms |
 | 50 | — | — | — | 157.9 ms | 735.5 ms | 1110.8 ms |
 
+*Baseline (A) was not tested at 30 and 50 users: at 20 users it already exceeded 350 ms p99 — above a typical 200 ms p99 SLO benchmark for synchronous user-facing endpoints — so higher-concurrency measurements would not change the conclusion.*
+
 ### Impact of Each Change
 
 **A → B: Global caching (+23% peak RPS, −40% p50 at 10 users)**
