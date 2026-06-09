@@ -1,0 +1,38 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+.env
+.env.*
+.venv/
+venv/
+env/
+
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+test-results/
+.pytest_cache/
+.coverage
+htmlcov/
+
+*.DS_Store
+
+# Claude Code internal settings (may contain tokens/secrets)
+.claude/
+
+# Personal scratch files
+chain_of_thought.ipynb
+journey.md
+
+# Generated model artifacts
+*.pkl
+
+# Profiling output
+profiling.html
+profiling-baselines/
+test/profiling/
